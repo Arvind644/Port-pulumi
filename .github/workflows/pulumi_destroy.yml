@@ -1,0 +1,104 @@
+name: Teardown pulumi stack
+
+on:
+  workflow_dispatch:
+    inputs:
+      port_payload:
+        required: true
+        description: "Port's payload, including details for who triggered the action and general context (blueprint, run id, etc...)"
+        type: string
+    secrets:
+      AWS_ACCESS_KEY_ID:
+        required: true
+      AWS_SECRET_ACCESS_KEY:
+        required: true
+      AWS_REGION:
+        required: true
+      PULUMI_ACCESS_TOKEN:
+        required: true
+      PORT_CLIENT_ID:
+        required: true
+      PORT_CLIENT_SECRET:
+        required: true
+
+jobs:
+  destroy:
+    name: Destroy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Add log to Port action
+        uses: port-labs/port-github-action@v1
+        with:
+          clientId: ${{ secrets.PORT_CLIENT_ID }}
+          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
+          operation: PATCH_RUN
+          runId: ${{ fromJson(inputs.port_payload).context.runId }}
+          logMessage: "Destroying stack 🚧"
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4
+        with:
+          python-version: 3.11
+      - name: Add log to Port action
+        uses: port-labs/port-github-action@v1
+        with:
+          clientId: ${{ secrets.PORT_CLIENT_ID }}
+          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
+          operation: PATCH_RUN
+          runId: ${{ fromJson(inputs.port_payload).context.runId }}
+          logMessage: "Setting up AWS credentials 🔐"
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-region: ${{ secrets.AWS_REGION }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      - run: pip install -r requirements.txt
+        working-directory: resources
+      - name: Add log to Port action
+        uses: port-labs/port-github-action@v1
+        with:
+          clientId: ${{ secrets.PORT_CLIENT_ID }}
+          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
+          operation: PATCH_RUN
+          runId: ${{ fromJson(inputs.port_payload).context.runId }}
+          logMessage: "Setting up Pulumi context"
+      - id: port-github-action-get-stack
+        name: Get stack entity
+        uses: port-labs/port-github-action@v1
+        with:
+          clientId: ${{ secrets.PORT_CLIENT_ID }}
+          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
+          operation: GET
+          blueprint: ${{ fromJson(inputs.port_payload).context.blueprint }}
+          identifier: ${{ fromJson(inputs.port_payload).context.entity }}
+      - uses: pulumi/actions@v4
+        with:
+          work-dir: resources
+      - run: |
+          pulumi stack select ${{ fromJson(steps.port-github-action-get-stack.outputs.entity).properties.env }}
+        env:
+          PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
+        working-directory: resources
+      - uses: pulumi/actions@v4
+        with:
+          command: destroy
+          stack-name: ${{ fromJson(steps.port-github-action-get-stack.outputs.entity).properties.env }} # When using an individual account, only use stack-name.
+          work-dir: resources
+        env:
+          PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
+      - run: |
+          pulumi stack rm -y ${{ fromJson(steps.port-github-action-get-stack.outputs.entity).properties.env }}
+        env:
+          PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
+        working-directory: resources
+      - name: Add log to Port action
+        uses: port-labs/port-github-action@v1
+        with:
+          clientId: ${{ secrets.PORT_CLIENT_ID }}
+          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
+          operation: PATCH_RUN
+          status: SUCCESS
+          summary: Stack deployed
+          runId: ${{ fromJson(inputs.port_payload).context.runId }}
+          logMessage: "Stack teardown complete ✅"
+          link: '["${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"]'
